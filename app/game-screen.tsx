@@ -262,6 +262,7 @@ export default function Home() {
               soundRef.current = !sound;
               setSound(!sound);
               unlockAudio();
+              if (gameRef.current?.phase === 'play') canvasRef.current?.focus();
             }}
           >
             {sound ? <AudioLines size={20} /> : <VolumeX size={20} />}
