@@ -11,6 +11,8 @@ import {
   Crosshair,
   Trophy,
   MoveUpRight,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { Game, UPGRADES, type UpgradeId } from '@/lib/game';
@@ -18,6 +20,11 @@ import { drawGame } from '@/lib/render';
 
 const fmt = (n: number) => Math.floor(n).toLocaleString('ru-RU');
 export default function Home() {
+  const shellRef = useRef<HTMLElement>(null);
+  const fullscreenMode = useRef<'native' | 'fallback' | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [fullscreenPending, setFullscreenPending] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
   const keys = useRef(new Set<string>());
@@ -106,6 +113,66 @@ export default function Home() {
     canvasRef.current?.focus();
   }
 
+  async function toggleFullscreen() {
+    const shell = shellRef.current;
+    if (!shell || fullscreenPending) return;
+    clearInput();
+    setFullscreenPending(true);
+    try {
+      if (document.fullscreenElement === shell) {
+        await document.exitFullscreen();
+      } else if (fullscreenMode.current === 'fallback') {
+        fullscreenMode.current = null;
+        setExpanded(false);
+        setFullscreen(false);
+      } else {
+        try {
+          if (!document.fullscreenEnabled || !shell.requestFullscreen) {
+            throw new Error('Fullscreen API unavailable');
+          }
+          await shell.requestFullscreen();
+          fullscreenMode.current = 'native';
+          setFullscreen(true);
+        } catch {
+          // Embedded browsers and some phones can still fill the current tab.
+          fullscreenMode.current = 'fallback';
+          setExpanded(true);
+          setFullscreen(true);
+        }
+      }
+    } catch {
+      // Keep the exit control available if the browser refuses an exit request.
+      setFullscreen(document.fullscreenElement === shell);
+    } finally {
+      setFullscreenPending(false);
+      if (gameRef.current?.phase === 'play') canvasRef.current?.focus();
+    }
+  }
+
+  useEffect(() => {
+    const syncFullscreen = () => {
+      const native = document.fullscreenElement === shellRef.current;
+      if (native) fullscreenMode.current = 'native';
+      else if (fullscreenMode.current === 'native')
+        fullscreenMode.current = null;
+      setFullscreen(native || fullscreenMode.current === 'fallback');
+      clearInput();
+      if (gameRef.current?.phase === 'play') canvasRef.current?.focus();
+    };
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    return () =>
+      document.removeEventListener('fullscreenchange', syncFullscreen);
+  }, []);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [expanded]);
+
   useEffect(() => {
     try {
       const stored = Number(localStorage.getItem('neon-rift-best'));
@@ -130,6 +197,16 @@ export default function Home() {
     observer.observe(canvas);
     resize();
     const down = (e: KeyboardEvent) => {
+      if (e.code === 'Escape' && fullscreenMode.current) {
+        if (fullscreenMode.current === 'fallback') {
+          fullscreenMode.current = null;
+          setExpanded(false);
+          setFullscreen(false);
+          clearInput();
+          if (game.phase === 'play') canvasRef.current?.focus();
+        }
+        return;
+      }
       if (!e.repeat && (e.code === 'Escape' || e.code === 'KeyP')) {
         pause();
         return;
@@ -239,7 +316,7 @@ export default function Home() {
 
   const active = view.phase === 'play' || view.phase === 'paused';
   return (
-    <main className="game-shell">
+    <main ref={shellRef} className={`game-shell${expanded ? ' expanded' : ''}`}>
       <header className="masthead">
         <a href="./" className="brand" aria-label="NEON RIFT — начало">
           <span className="brand-icon">
@@ -254,6 +331,22 @@ export default function Home() {
           <span className="best">
             <Trophy size={15} /> РЕКОРД <b>{fmt(best)}</b>
           </span>
+          <button
+            className="icon-button"
+            aria-label={
+              fullscreen ? 'Выйти из полноэкранного режима' : 'Во весь экран'
+            }
+            title={
+              fullscreen
+                ? 'Выйти из полноэкранного режима (Esc)'
+                : 'Во весь экран'
+            }
+            aria-pressed={fullscreen}
+            disabled={fullscreenPending}
+            onClick={toggleFullscreen}
+          >
+            {fullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+          </button>
           <button
             className="icon-button"
             aria-label={sound ? 'Выключить звук' : 'Включить звук'}

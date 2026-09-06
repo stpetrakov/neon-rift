@@ -916,3 +916,58 @@ kbd {
     animation-duration: 1s;
   }
 }
+
+.game-shell:fullscreen,
+.game-shell.expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  margin: 0;
+  padding: 0 clamp(10px, 2vw, 28px);
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  overflow: hidden;
+}
+.game-shell:is(:fullscreen, .expanded) .masthead {
+  height: 64px;
+  flex-shrink: 0;
+}
+.game-shell:is(:fullscreen, .expanded) .console {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.game-shell:is(:fullscreen, .expanded) .arena-wrap {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+.game-shell:is(:fullscreen, .expanded) .telemetry,
+.game-shell:is(:fullscreen, .expanded) .statusbar,
+.game-shell:is(:fullscreen, .expanded) .footer {
+  flex-shrink: 0;
+}
+.game-shell:is(:fullscreen, .expanded) .footer {
+  padding: 12px 0;
+}
+.game-shell:is(:fullscreen, .expanded) .screen-overlay {
+  justify-content: safe center;
+}
+@media (max-height: 650px) {
+  .game-shell:is(:fullscreen, .expanded) .masthead {
+    height: 52px;
+  }
+  .game-shell:is(:fullscreen, .expanded) .telemetry {
+    min-height: 54px;
+    padding-block: 10px;
+  }
+  .game-shell:is(:fullscreen, .expanded) .footer {
+    display: none;
+  }
+}
