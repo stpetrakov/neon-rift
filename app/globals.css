@@ -1217,3 +1217,173 @@ kbd {
     display: none;
   }
 }
+
+.start-screen {
+  display: block;
+  padding: 32px 5%;
+}
+.start-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(290px, 365px);
+  gap: 32px;
+  align-items: center;
+  min-height: 100%;
+}
+.run-settings {
+  width: 100%;
+  padding: 24px;
+  border: 1px solid #486342;
+  border-radius: 10px;
+  background: #0c191bf2;
+  box-shadow: 0 12px 40px #0004;
+}
+.screen-overlay .run-settings h2 {
+  font-size: 26px;
+  margin: 12px 0 22px;
+  letter-spacing: -0.7px;
+}
+.difficulty-picker {
+  border: 0;
+  padding: 0;
+  margin: 0 0 20px;
+  min-width: 0;
+}
+.difficulty-picker legend,
+.heat-select {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: #e3edde;
+}
+.difficulty-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+.difficulty-options label {
+  position: relative;
+  cursor: pointer;
+  border: 1px solid #3e5143;
+  border-radius: 4px;
+  padding: 11px 4px;
+  text-align: center;
+  font-size: 12px;
+  color: #aebdaf;
+}
+.difficulty-options label.selected {
+  background: #253e20;
+  border-color: #bcff5c;
+  color: #d8ffac;
+}
+.difficulty-options input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.difficulty-options label:focus-within {
+  outline: 2px solid #e3ffbd;
+  outline-offset: 3px;
+}
+.run-settings p {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #a8bdae;
+  margin: 10px 0 0;
+}
+.run-settings select {
+  color-scheme: dark;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #4c6350;
+  border-radius: 4px;
+  background: #16261f;
+  color: #e4f2dd;
+  padding: 9px;
+  font-size: 13px;
+}
+.heat-tuning {
+  margin-top: 17px;
+}
+.heat-tuning label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #c4d7c7;
+}
+.heat-tuning output {
+  color: #bcff5c;
+  font: bold 13px monospace;
+}
+.heat-tuning input {
+  width: 100%;
+  height: 30px;
+  accent-color: #bcff5c;
+  cursor: pointer;
+  margin: 2px 0 9px;
+}
+.run-settings .settings-note {
+  border-top: 1px solid #2d4136;
+  padding-top: 13px;
+  margin-top: 18px;
+  font-size: 11px;
+  color: #8fa595;
+}
+.control-guide {
+  margin: 0 0 18px;
+  max-width: 410px;
+}
+.control-guide summary {
+  color: #c0d4bb;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 5px 0;
+}
+.control-guide .combat-instructions {
+  margin: 10px 0 0;
+}
+.secondary-button {
+  margin-top: 15px;
+  padding: 12px 16px;
+  min-height: 44px;
+  border: 1px solid #4b6247;
+  border-radius: 4px;
+  color: #c6d9bb;
+  background: #18261d;
+  font-size: 13px;
+}
+.secondary-button:hover {
+  border-color: #bcff5c;
+  color: #e0ffc3;
+}
+.restart-note {
+  font-size: 11px;
+  margin-top: 8px;
+  color: #90a28c;
+}
+.settings-start {
+  width: 100%;
+  min-width: 0;
+  margin-top: 18px;
+}
+@media (max-width: 900px) {
+  .start-layout {
+    grid-template-columns: 1fr;
+    gap: 25px;
+    max-width: 520px;
+    margin: auto;
+  }
+  .start-screen {
+    padding: 36px 24px;
+  }
+  .run-settings {
+    padding: 20px;
+  }
+  .start-screen h1 {
+    font-size: 65px;
+    letter-spacing: -4px;
+  }
+}

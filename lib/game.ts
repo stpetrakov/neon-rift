@@ -1,5 +1,77 @@
 export type Phase = 'menu' | 'play' | 'paused' | 'upgrade' | 'over' | 'win';
 export type Weapon = 'plasma' | 'rail';
+export const DIFFICULTIES = {
+  easy: {
+    name: 'Лёгкая',
+    description: '6 щитов · меньше врагов · больше времени на уклонение',
+    shield: 6,
+    health: 0.7,
+    count: 0.75,
+    speed: 0.8,
+    pressure: 0.8,
+    warning: 1.3,
+  },
+  normal: {
+    name: 'Обычная',
+    description: '4 щита · прежний баланс · полный набор атак',
+    shield: 4,
+    health: 1,
+    count: 1,
+    speed: 1,
+    pressure: 1,
+    warning: 1,
+  },
+  hard: {
+    name: 'Сложная',
+    description: '3 щита · больше и крепче враги · атаки быстрее',
+    shield: 3,
+    health: 1.35,
+    count: 1.25,
+    speed: 1.15,
+    pressure: 1.2,
+    warning: 0.85,
+  },
+} as const;
+export type Difficulty = keyof typeof DIFFICULTIES;
+export type HeatMode = 'standard' | 'off' | 'custom';
+export interface GameSettings {
+  difficulty: Difficulty;
+  heatMode: HeatMode;
+  heatRate: number;
+  coolingRate: number;
+}
+export function normalizeSettings(value: unknown = {}): GameSettings {
+  const s =
+    value && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : {};
+  const rate = (n: unknown) =>
+    typeof n === 'number' && Number.isFinite(n)
+      ? Math.max(25, Math.min(200, Math.round(n / 25) * 25))
+      : 100;
+  return {
+    difficulty:
+      s.difficulty === 'easy' || s.difficulty === 'hard'
+        ? s.difficulty
+        : 'normal',
+    heatMode:
+      s.heatMode === 'off' || s.heatMode === 'custom' ? s.heatMode : 'standard',
+    heatRate: rate(s.heatRate),
+    coolingRate: rate(s.coolingRate),
+  };
+}
+export function settingsRecordKey(value: GameSettings) {
+  const s = normalizeSettings(value);
+  const heat =
+    s.heatMode === 'off'
+      ? 'off'
+      : s.heatMode === 'custom'
+        ? `${s.heatRate}-${s.coolingRate}`
+        : '100-100';
+  return s.difficulty === 'normal' && heat === '100-100'
+    ? 'neon-rift-v2-best'
+    : `neon-rift-v2-best:${s.difficulty}:${heat}`;
+}
 export type UpgradeId =
   | 'rapid'
   | 'power'
@@ -124,6 +196,13 @@ export const ENEMY_NAMES = [
 ];
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 export class Game {
+  settings: Readonly<GameSettings> = Object.freeze(normalizeSettings());
+  get difficulty() {
+    return DIFFICULTIES[this.settings.difficulty];
+  }
+  get heatEnabled() {
+    return this.settings.heatMode !== 'off';
+  }
   phase: Phase = 'menu';
   width = 1000;
   height = 680;
@@ -203,7 +282,8 @@ export class Game {
     for (const p of this.particles) p.y *= ratio;
     this.pulseY *= ratio;
   }
-  start() {
+  start(settings: GameSettings = this.settings) {
+    this.settings = Object.freeze(normalizeSettings(settings));
     this.phase = 'play';
     this.wave = 1;
     this.score = this.kills = this.elapsed = 0;
@@ -212,8 +292,8 @@ export class Game {
     this.player = {
       x: this.width / 2,
       y: this.height / 2,
-      hp: 4,
-      maxHp: 4,
+      hp: this.difficulty.shield,
+      maxHp: this.difficulty.shield,
       angle: -Math.PI / 2,
       invincible: 1,
       speed: 245,
@@ -232,7 +312,11 @@ export class Game {
     this.weapon = 'plasma';
     this.heat = 0;
     this.overheated = false;
-    this.cooling = 35;
+    this.cooling =
+      35 *
+      (this.settings.heatMode === 'custom'
+        ? this.settings.coolingRate / 100
+        : 1);
     this.cancelFire();
     this.pulseEnergy = 100;
     this.pulseRadius = 205;
@@ -246,12 +330,12 @@ export class Game {
     this.beginWave();
   }
   beginWave() {
-    this.spawnLeft = 14 + this.wave * 4;
+    this.spawnLeft = Math.round((14 + this.wave * 4) * this.difficulty.count);
     this.totalWave = this.spawnLeft;
     this.waveKills = 0;
     this.waveElapsed = 0;
     this.spawnTime = 1;
-    this.hazardTime = 6;
+    this.hazardTime = 6 / this.difficulty.pressure;
     this.bullets = [];
     this.hazards = [];
     this.heat = 0;
@@ -420,8 +504,8 @@ export class Game {
                 : kind === 1
                   ? 12
                   : 15,
-      hp,
-      maxHp: hp,
+      hp: Math.max(1, Math.round(hp * this.difficulty.health)),
+      maxHp: Math.max(1, Math.round(hp * this.difficulty.health)),
       kind,
       age: 0,
       cooldown: kind === 3 ? 1.5 : 1 + this.rng(),
@@ -470,6 +554,7 @@ export class Game {
     }
   }
   hostileShot(e: Enemy, a: number, speed: number) {
+    speed *= this.difficulty.speed;
     this.bullets.push({
       x: e.x,
       y: e.y,
@@ -481,6 +566,13 @@ export class Game {
     });
   }
   addHeat(amount: number) {
+    if (!this.heatEnabled) {
+      this.heat = 0;
+      this.overheated = false;
+      return;
+    }
+    if (this.settings.heatMode === 'custom')
+      amount *= this.settings.heatRate / 100;
     this.heat = clamp(this.heat + amount, 0, 100);
     if (this.heat >= 100) {
       this.overheated = true;
@@ -555,10 +647,11 @@ export class Game {
     if (
       this.spawnLeft > 0 &&
       this.spawnTime <= 0 &&
-      this.enemies.length < 22 + this.wave
+      this.enemies.length < Math.round((22 + this.wave) * this.difficulty.count)
     ) {
       this.spawn();
-      this.spawnTime = Math.max(0.26, 0.84 - this.wave * 0.048);
+      this.spawnTime =
+        Math.max(0.26, 0.84 - this.wave * 0.048) / this.difficulty.pressure;
     }
     if (Number.isFinite(input.aimX) && Number.isFinite(input.aimY))
       p.angle = Math.atan2(input.aimY! - p.y, input.aimX! - p.x);
@@ -607,7 +700,7 @@ export class Game {
       }
       const a = Math.atan2(p.y - e.y, p.x - e.x),
         d = Math.hypot(p.x - e.x, p.y - e.y);
-      e.cooldown -= dt;
+      e.cooldown -= dt * this.difficulty.pressure;
       let moveAngle = a,
         speed =
           (e.kind === 3
@@ -652,10 +745,11 @@ export class Game {
         } else if (e.cooldown <= 0) {
           e.state = 'windup';
           e.targetAngle = a;
-          e.timer = e.kind === 4 ? 0.7 : 0.95;
+          e.timer = (e.kind === 4 ? 0.7 : 0.95) * this.difficulty.warning;
           speed = 0;
         }
       }
+      speed *= this.difficulty.speed;
       e.x = clamp(e.x + Math.cos(moveAngle) * speed * dt, 18, this.width - 18);
       e.y = clamp(e.y + Math.sin(moveAngle) * speed * dt, 18, this.height - 18);
       if (e.kind === 2 && e.cooldown <= 0) {
@@ -683,7 +777,7 @@ export class Game {
             y: p.y,
             r: 85,
             age: 0,
-            warning: 1.15,
+            warning: 1.15 * this.difficulty.warning,
             duration: 1.8,
           });
       }
@@ -736,13 +830,14 @@ export class Game {
     );
     this.hazardTime -= dt;
     if (this.wave >= 3 && this.hazardTime <= 0) {
-      this.hazardTime = Math.max(3.5, 6 - this.wave * 0.22);
+      this.hazardTime =
+        Math.max(3.5, 6 - this.wave * 0.22) / this.difficulty.pressure;
       this.hazards.push({
         x: clamp(p.x + this.moveX * 70, 70, this.width - 70),
         y: clamp(p.y + this.moveY * 70, 70, this.height - 70),
         r: 65 + this.wave * 2,
         age: 0,
-        warning: 1.35,
+        warning: 1.35 * this.difficulty.warning,
         duration: 2,
       });
     }
@@ -791,7 +886,9 @@ export class Game {
       } else {
         this.phase = 'upgrade';
         const pool = (Object.keys(UPGRADES) as UpgradeId[]).filter(
-          (id) => id !== 'spread' || this.shotCount < 4,
+          (id) =>
+            (id !== 'spread' || this.shotCount < 4) &&
+            (id !== 'cooling' || this.heatEnabled),
         );
         for (let i = pool.length - 1; i > 0; i--) {
           const j = Math.floor(this.rng() * (i + 1));

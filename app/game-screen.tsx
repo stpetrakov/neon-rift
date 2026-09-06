@@ -20,8 +20,18 @@ import {
   Minimize2,
 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
-import { Game, UPGRADES, type UpgradeId, type Weapon } from '@/lib/game';
+import {
+  Game,
+  UPGRADES,
+  DIFFICULTIES,
+  normalizeSettings,
+  settingsRecordKey,
+  type GameSettings,
+  type UpgradeId,
+  type Weapon,
+} from '@/lib/game';
 import { drawGame } from '@/lib/render';
+import { RunSettings } from './run-settings';
 
 const fmt = (n: number) => Math.floor(n).toLocaleString('ru-RU');
 export default function Home() {
@@ -52,6 +62,8 @@ export default function Home() {
   const audioRef = useRef<AudioContext | null>(null);
   const [sound, setSound] = useState(true);
   const [best, setBest] = useState(0);
+  const settingsRef = useRef(normalizeSettings());
+  const [settings, setSettings] = useState<GameSettings>(normalizeSettings);
   const [view, setView] = useState({
     phase: 'menu',
     wave: 1,
@@ -78,6 +90,32 @@ export default function Home() {
   } | null>(null);
   const actionRef = useRef<HTMLButtonElement>(null);
   const choicesRef = useRef<HTMLButtonElement>(null);
+
+  function loadBest(value: GameSettings) {
+    try {
+      const stored = Number(localStorage.getItem(settingsRecordKey(value)));
+      setBest(Number.isFinite(stored) ? Math.max(0, stored) : 0);
+    } catch {
+      setBest(0);
+    }
+  }
+  function changeSettings(value: GameSettings) {
+    const next = normalizeSettings(value);
+    settingsRef.current = next;
+    setSettings(next);
+    loadBest(next);
+    try {
+      localStorage.setItem('neon-rift-settings', JSON.stringify(next));
+    } catch {}
+  }
+  function openSetup() {
+    clearInput();
+    const game = gameRef.current;
+    if (game) {
+      game.start(settingsRef.current);
+      game.phase = 'menu';
+    }
+  }
 
   function soundEffect(kind: string) {
     const ac = audioRef.current;
@@ -220,7 +258,8 @@ export default function Home() {
   function start() {
     unlockAudio();
     clearInput();
-    gameRef.current?.start();
+    gameRef.current?.start(settingsRef.current);
+    loadBest(settingsRef.current);
     canvasRef.current?.focus();
   }
   function pause() {
@@ -295,9 +334,13 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const stored = Number(localStorage.getItem('neon-rift-v2-best'));
-      if (Number.isFinite(stored)) setBest(Math.max(0, stored));
+      const stored = normalizeSettings(
+        JSON.parse(localStorage.getItem('neon-rift-settings') || '{}'),
+      );
+      settingsRef.current = stored;
+      setSettings(stored);
     } catch {}
+    loadBest(settingsRef.current);
     const game = new Game();
     gameRef.current = game;
     const canvas = canvasRef.current!;
@@ -317,6 +360,14 @@ export default function Home() {
     observer.observe(canvas);
     resize();
     const down = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return;
+      if (e.target instanceof HTMLElement && e.target.closest('summary'))
+        return;
       if (e.code === 'Escape' && fullscreenMode.current) {
         if (fullscreenMode.current === 'fallback') {
           fullscreenMode.current = null;
@@ -436,7 +487,10 @@ export default function Home() {
         setBest((old) => {
           const next = Math.max(old, game.score);
           try {
-            localStorage.setItem('neon-rift-v2-best', String(next));
+            localStorage.setItem(
+              settingsRecordKey(game.settings),
+              String(next),
+            );
           } catch {}
           return next;
         });
@@ -482,7 +536,10 @@ export default function Home() {
           </span>
         </a>
         <div className="header-right">
-          <span className="best">
+          <span
+            className="best"
+            title="Рекорд для выбранной сложности и настроек перегрева"
+          >
             <Trophy size={15} /> РЕКОРД <b>{fmt(best)}</b>
           </span>
           <button
@@ -565,13 +622,16 @@ export default function Home() {
             Для игры нужен браузер с поддержкой Canvas.
           </canvas>
           <div className="arena-coord top-left" aria-hidden="true">
-            SECTOR 07 <span>↗</span>
+            {DIFFICULTIES[settings.difficulty].name.toUpperCase()}{' '}
+            <span>↗</span>
           </div>
           <div className="arena-coord bottom-left" aria-hidden="true">
             {active
               ? view.weapon === 'rail'
                 ? 'УДЕРЖИВАЙ ОГОНЬ → ОТПУСТИ'
-                : 'СТРЕЛЯЙ КОРОТКИМИ ОЧЕРЕДЯМИ'
+                : settings.heatMode === 'off'
+                  ? 'НЕПРЕРЫВНЫЙ ОГОНЬ · БЕЗ ПЕРЕГРЕВА'
+                  : 'СТРЕЛЯЙ КОРОТКИМИ ОЧЕРЕДЯМИ'
               : 'MANUAL COMBAT / V2'}
           </div>
           <div className="arena-coord bottom-right" aria-hidden="true">
@@ -619,46 +679,60 @@ export default function Home() {
           )}
           {view.phase === 'menu' && (
             <div className="screen-overlay start-screen">
-              <div className="eyebrow">
-                <span /> ПРОТОКОЛ V2 · РУЧНОЙ БОЙ
-              </div>
-              <h1>
-                NEON
-                <br />
-                <span>RIFT</span>
-                <i>↗</i>
-              </h1>
-              <p className="intro">
-                Один пилот. Десять волн.
-                <br />
-                Целься. Меняй оружие. Не перегревайся.
-              </p>
-              <button className="primary-button" onClick={start}>
-                ВОЙТИ В РАЗЛОМ <ArrowUpRight size={23} />
-              </button>
-              <span className="start-hint">
-                WASD — движение · SPACE — рывок
-              </span>
-              <p className="combat-instructions">
-                Плазма: удерживай ЛКМ, делай паузы для охлаждения.
-                <br />
-                Рельсотрон: удерживай для заряда, отпусти для выстрела.
-                <br />
-                Импульс сбивает пули рядом. Зелёная энергия восполняет заряд.
-              </p>
-              <p className="mobile-start-hint">
-                Слева — движение, справа — прицел и огонь. Веди двумя пальцами.
-              </p>
-              <div className="start-controls">
-                <span>
-                  <MoveUpRight size={16} /> Q — оружие
-                </span>
-                <span>
-                  <Crosshair size={16} /> ЛКМ — огонь
-                </span>
-                <span>
-                  <Zap size={16} /> E — импульс
-                </span>
+              <div className="start-layout">
+                <div className="start-copy">
+                  <div className="eyebrow">
+                    <span /> ПРОТОКОЛ V2 · РУЧНОЙ БОЙ
+                  </div>
+                  <h1>
+                    NEON
+                    <br />
+                    <span>RIFT</span>
+                    <i>↗</i>
+                  </h1>
+                  <p className="intro">
+                    Один пилот. Десять волн.
+                    <br />
+                    Целься. Меняй оружие. Выбирай свои правила.
+                  </p>
+                  <button className="primary-button" onClick={start}>
+                    ВОЙТИ В РАЗЛОМ <ArrowUpRight size={23} />
+                  </button>
+                  <span className="start-hint">
+                    WASD — движение · SPACE — рывок
+                  </span>
+                  <details className="control-guide">
+                    <summary>Управление и оружие</summary>
+                    <p className="combat-instructions">
+                      Плазма: удерживай ЛКМ, делай паузы для охлаждения.
+                      <br />
+                      Рельсотрон: удерживай для заряда, отпусти для выстрела.
+                      <br />
+                      Импульс сбивает пули рядом. Зелёная энергия восполняет
+                      заряд.
+                    </p>
+                  </details>
+                  <p className="mobile-start-hint">
+                    Слева — движение, справа — прицел и огонь. Веди двумя
+                    пальцами.
+                  </p>
+                  <div className="start-controls">
+                    <span>
+                      <MoveUpRight size={16} /> Q — оружие
+                    </span>
+                    <span>
+                      <Crosshair size={16} /> ЛКМ — огонь
+                    </span>
+                    <span>
+                      <Zap size={16} /> E — импульс
+                    </span>
+                  </div>
+                </div>
+                <RunSettings
+                  value={settings}
+                  onChange={changeSettings}
+                  onStart={start}
+                />
               </div>
             </div>
           )}
@@ -677,6 +751,10 @@ export default function Home() {
               >
                 ПРОДОЛЖИТЬ <Play size={20} />
               </button>
+              <button className="secondary-button" onClick={openSetup}>
+                Новый заход с другими настройками
+              </button>
+              <small className="restart-note">Текущий заход завершится</small>
             </div>
           )}
           {view.phase === 'upgrade' && (
@@ -736,6 +814,9 @@ export default function Home() {
               >
                 ИГРАТЬ СНОВА <ArrowUpRight size={23} />
               </button>
+              <button className="secondary-button" onClick={openSetup}>
+                Изменить сложность и перегрев
+              </button>
             </div>
           )}
         </div>
@@ -752,15 +833,27 @@ export default function Home() {
               <small>
                 {view.weapon === 'rail'
                   ? `Заряд ${Math.round(view.charge * 100)}% · отпусти огонь`
-                  : 'Очереди · следи за нагревом'}
+                  : settings.heatMode === 'off'
+                    ? 'Непрерывный огонь · без перегрева'
+                    : 'Очереди · следи за нагревом'}
               </small>
             </span>
             <span>⇄</span>
           </button>
           <div className={`heat-meter ${view.overheated ? 'locked' : ''}`}>
             <div>
-              <span>{view.overheated ? 'ПЕРЕГРЕВ' : 'НАГРЕВ'}</span>
-              <b>{Math.round(view.heat)}%</b>
+              <span>
+                {settings.heatMode === 'off'
+                  ? 'БЕЗ НАГРЕВА'
+                  : view.overheated
+                    ? 'ПЕРЕГРЕВ'
+                    : 'НАГРЕВ'}
+              </span>
+              <b>
+                {settings.heatMode === 'off'
+                  ? '∞'
+                  : `${Math.round(view.heat)}%`}
+              </b>
             </div>
             <Progress aria-label="Нагрев оружия" value={view.heat} />
           </div>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game } from '../lib/game.ts';
+import { Game, normalizeSettings, settingsRecordKey } from '../lib/game.ts';
 const idle = { x: 0, y: 0, dash: false };
 const tick = (g, n, input = idle) => {
   for (let i = 0; i < n; i++) g.update(1 / 60, input);
@@ -436,4 +436,156 @@ test('resizing preserves vertical positions of projectiles and active effects', 
   assert.equal(g.bullets[0].y, 680);
   assert.equal(g.hazards[0].y, 680);
   assert.equal(g.pulseY, 680);
+});
+
+test('difficulty changes shield, enemy count, health, movement and shot speed', () => {
+  const runs = ['easy', 'normal', 'hard'].map((difficulty) => {
+    const g = new Game(seeded(42));
+    g.start(normalizeSettings({ difficulty }));
+    const count = g.totalWave;
+    g.spawn();
+    const hp = g.enemies[0].hp;
+    const e = enemy(100, 100, 100);
+    g.enemies = [e];
+    g.spawnTime = 99;
+    g.hostileShot(e, 0, 200);
+    const bulletSpeed = g.bullets[0].vx;
+    g.update(1 / 60, idle);
+    return {
+      shield: g.player.hp,
+      count,
+      hp,
+      movement: Math.hypot(e.x - 100, e.y - 100),
+      bulletSpeed,
+    };
+  });
+  assert.deepEqual(
+    runs.map((r) => r.shield),
+    [6, 4, 3],
+  );
+  assert.deepEqual(
+    runs.map((r) => r.count),
+    [14, 18, 23],
+  );
+  for (const field of ['hp', 'movement', 'bulletSpeed']) {
+    assert.ok(runs[0][field] < runs[1][field], field);
+    assert.ok(runs[1][field] < runs[2][field], field);
+  }
+});
+
+test('disabled overheating permits sustained plasma and charged rail fire', () => {
+  const g = new Game();
+  g.start(normalizeSettings({ heatMode: 'off' }));
+  g.spawnTime = 99;
+  tick(g, 600, { ...idle, shoot: true });
+  assert.equal(g.heat, 0);
+  assert.equal(g.overheated, false);
+  assert.ok(g.events.filter((e) => e === 'shoot').length > 50);
+  g.switchWeapon();
+  tick(g, 80, { ...idle, shoot: true });
+  g.update(1 / 60, idle);
+  assert.ok(g.bullets.some((b) => b.rail));
+  assert.equal(g.heat, 0);
+  g.spawnLeft = 0;
+  g.enemies = [];
+  g.update(1 / 60, idle);
+  assert.equal(g.phase, 'upgrade');
+  assert.ok(!g.choices.includes('cooling'));
+  g.upgrade(g.choices[0]);
+  assert.equal(g.heatEnabled, false);
+});
+
+test('custom heat and cooling sliders independently change weapon behavior', () => {
+  const make = (heatRate, coolingRate) => {
+    const g = new Game();
+    g.start(normalizeSettings({ heatMode: 'custom', heatRate, coolingRate }));
+    g.spawnTime = 99;
+    return g;
+  };
+  const slow = make(25, 100),
+    fast = make(200, 100);
+  slow.update(1 / 60, { ...idle, shoot: true });
+  fast.update(1 / 60, { ...idle, shoot: true });
+  assert.equal(slow.heat, 2.25);
+  assert.equal(fast.heat, 18);
+  const warm = make(100, 25),
+    cold = make(100, 200);
+  warm.heat = cold.heat = 50;
+  tick(warm, 60);
+  tick(cold, 60);
+  assert.ok(warm.heat > 40);
+  assert.equal(cold.heat, 0);
+});
+
+test('settings validate stored values, isolate active runs and separate records', () => {
+  assert.deepEqual(normalizeSettings(null), normalizeSettings());
+  assert.deepEqual(
+    normalizeSettings({
+      difficulty: '__proto__',
+      heatMode: 'broken',
+      heatRate: NaN,
+      coolingRate: Infinity,
+    }),
+    normalizeSettings(),
+  );
+  const s = normalizeSettings({
+    difficulty: 'hard',
+    heatMode: 'custom',
+    heatRate: -1,
+    coolingRate: 999,
+  });
+  assert.equal(s.heatRate, 25);
+  assert.equal(s.coolingRate, 200);
+  const g = new Game();
+  g.start(s);
+  s.difficulty = 'easy';
+  assert.equal(g.settings.difficulty, 'hard');
+  g.start();
+  assert.equal(g.settings.difficulty, 'hard');
+  assert.equal(g.cooling, 70);
+  const standard = normalizeSettings(),
+    custom = normalizeSettings({ heatMode: 'custom' });
+  assert.equal(settingsRecordKey(standard), 'neon-rift-v2-best');
+  assert.equal(settingsRecordKey(standard), settingsRecordKey(custom));
+  const variants = [
+    standard,
+    normalizeSettings({ difficulty: 'easy' }),
+    normalizeSettings({ difficulty: 'hard' }),
+    normalizeSettings({ heatMode: 'off' }),
+    normalizeSettings({ heatMode: 'custom', heatRate: 50 }),
+  ];
+  assert.equal(new Set(variants.map(settingsRecordKey)).size, variants.length);
+});
+
+test('easy and hard modes can finish all waves with overheating disabled', () => {
+  for (const difficulty of ['easy', 'hard']) {
+    const g = new Game(seeded(937));
+    g.start(normalizeSettings({ difficulty, heatMode: 'off' }));
+    let frames = 0;
+    while (g.phase !== 'win' && frames++ < 72000) {
+      if (g.phase === 'upgrade')
+        g.upgrade(
+          ['power', 'spread', 'rapid', 'shield', 'dash', 'speed', 'pulse'].find(
+            (id) => g.choices.includes(id),
+          ),
+        );
+      g.player.invincible = 10;
+      const target = g.enemies.find((e) => e.age > 0.65);
+      const a = target
+        ? Math.atan2(target.y - g.player.y, target.x - g.player.x)
+        : 0;
+      g.update(1 / 60, {
+        x: Math.cos(a) * 0.2,
+        y: Math.sin(a) * 0.2,
+        dash: false,
+        aimX: target?.x,
+        aimY: target?.y,
+        shoot: !!target,
+      });
+      g.events = [];
+    }
+    assert.equal(g.phase, 'win', difficulty);
+    assert.equal(g.wave, 10);
+    assert.equal(g.kills, difficulty === 'easy' ? 275 : 455);
+  }
 });
