@@ -1,44 +1,57 @@
 export type Phase = 'menu' | 'play' | 'paused' | 'upgrade' | 'over' | 'win';
+export type Weapon = 'plasma' | 'rail';
 export type UpgradeId =
   | 'rapid'
   | 'power'
   | 'spread'
   | 'shield'
   | 'speed'
-  | 'dash';
+  | 'dash'
+  | 'cooling'
+  | 'pulse';
 export const UPGRADES: Record<
   UpgradeId,
   { name: string; description: string; symbol: string }
 > = {
   rapid: {
     name: 'Овердрайв',
-    description: 'На 20% быстрее стрельба',
+    description: 'Плазма стреляет на 15% быстрее',
     symbol: '»',
   },
   power: {
     name: 'Плазменное ядро',
-    description: '+1 к урону каждого выстрела',
+    description: '+1 к урону. Усиливает оба оружия',
     symbol: '✳',
   },
   spread: {
     name: 'Мультивыстрел',
-    description: '+1 снаряд в каждом залпе',
+    description: '+1 плазменный снаряд; +1 пробитие рельсотрона',
     symbol: '⋔',
   },
   shield: {
-    name: 'Новый щит',
-    description: '+1 к щиту и полное восстановление',
+    name: 'Ремонт щита',
+    description: '+1 к максимуму (до 7), восстановить 2 единицы',
     symbol: '◇',
   },
   speed: {
     name: 'Ионный двигатель',
-    description: '+15% к скорости движения',
+    description: '+12% к скорости движения',
     symbol: '↗',
   },
   dash: {
     name: 'Фазовый сдвиг',
-    description: 'Рывок восстанавливается на 20% быстрее',
+    description: 'Рывок восстанавливается на 15% быстрее',
     symbol: 'ϟ',
+  },
+  cooling: {
+    name: 'Криоконтур',
+    description: 'Охлаждение на 25% быстрее',
+    symbol: '❄',
+  },
+  pulse: {
+    name: 'Ударная волна',
+    description: '+35 к радиусу импульса, +3 к его урону',
+    symbol: '◎',
   },
 };
 export interface Enemy {
@@ -51,6 +64,11 @@ export interface Enemy {
   age: number;
   cooldown: number;
   hit: number;
+  state?: 'seek' | 'windup' | 'charge';
+  timer?: number;
+  targetAngle?: number;
+  stun?: number;
+  attack?: number;
 }
 export interface Bullet {
   x: number;
@@ -60,6 +78,9 @@ export interface Bullet {
   life: number;
   damage: number;
   hostile: boolean;
+  rail?: boolean;
+  pierce?: number;
+  hitTargets?: Set<Enemy>;
 }
 export interface Particle {
   x: number;
@@ -76,6 +97,31 @@ export interface Drop {
   y: number;
   age: number;
 }
+export interface Hazard {
+  x: number;
+  y: number;
+  r: number;
+  age: number;
+  warning: number;
+  duration: number;
+}
+export interface Input {
+  x: number;
+  y: number;
+  dash: boolean;
+  aimX?: number;
+  aimY?: number;
+  shoot?: boolean;
+  pulse?: boolean;
+}
+export const ENEMY_NAMES = [
+  'ОХОТНИК',
+  'ФЛАНКЕР',
+  'СТРЕЛОК',
+  'СТРАЖ РАЗЛОМА',
+  'ШТУРМОВИК',
+  'СНАЙПЕР',
+];
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 export class Game {
   phase: Phase = 'menu';
@@ -91,24 +137,37 @@ export class Game {
   player = {
     x: 500,
     y: 340,
-    hp: 5,
-    maxHp: 5,
+    hp: 4,
+    maxHp: 4,
     angle: -Math.PI / 2,
     invincible: 0,
-    speed: 225,
+    speed: 245,
   };
   enemies: Enemy[] = [];
   bullets: Bullet[] = [];
   particles: Particle[] = [];
   drops: Drop[] = [];
+  hazards: Hazard[] = [];
   events: string[] = [];
   choices: UpgradeId[] = [];
   damage = 1;
-  fireInterval = 0.29;
+  fireInterval = 0.15;
   shotCount = 1;
   fireTime = 0;
+  weapon: Weapon = 'plasma';
+  heat = 0;
+  overheated = false;
+  cooling = 35;
+  railCharge = 0;
+  wasFiring = false;
+  pulseEnergy = 100;
+  pulseRadius = 205;
+  pulseDamage = 5;
+  pulseFlash = 0;
+  pulseX = 0;
+  pulseY = 0;
   dashCooldown = 0;
-  dashInterval = 2.8;
+  dashInterval = 2.6;
   dashTime = 0;
   dashX = 0;
   dashY = -1;
@@ -119,6 +178,8 @@ export class Game {
   spawnLeft = 0;
   totalWave = 0;
   waveKills = 0;
+  hazardTime = 8;
+  waveElapsed = 0;
   rng: () => number;
   constructor(rng: () => number = Math.random) {
     this.rng = rng;
@@ -127,10 +188,20 @@ export class Game {
     return this.totalWave ? (this.waveKills / this.totalWave) * 100 : 0;
   }
   resize(w: number, h: number) {
+    const ratio = h / this.height;
     this.width = w;
     this.height = h;
     this.player.x = clamp(this.player.x, 22, w - 22);
-    this.player.y = clamp(this.player.y, 22, h - 22);
+    this.player.y = clamp(this.player.y * ratio, 22, h - 22);
+    for (const e of this.enemies) {
+      e.x = clamp(e.x, 20, w - 20);
+      e.y = clamp(e.y * ratio, 20, h - 20);
+    }
+    for (const d of this.drops) d.y = clamp(d.y * ratio, 20, h - 20);
+    for (const z of this.hazards) z.y = clamp(z.y * ratio, 20, h - 20);
+    for (const b of this.bullets) b.y *= ratio;
+    for (const p of this.particles) p.y *= ratio;
+    this.pulseY *= ratio;
   }
   start() {
     this.phase = 'play';
@@ -141,65 +212,131 @@ export class Game {
     this.player = {
       x: this.width / 2,
       y: this.height / 2,
-      hp: 5,
-      maxHp: 5,
+      hp: 4,
+      maxHp: 4,
       angle: -Math.PI / 2,
       invincible: 1,
-      speed: 225,
+      speed: 245,
     };
     this.enemies = [];
     this.bullets = [];
-    this.drops = [];
     this.particles = [];
+    this.drops = [];
+    this.hazards = [];
     this.events = [];
     this.choices = [];
     this.damage = 1;
-    this.fireInterval = 0.29;
+    this.fireInterval = 0.15;
     this.shotCount = 1;
     this.fireTime = 0;
+    this.weapon = 'plasma';
+    this.heat = 0;
+    this.overheated = false;
+    this.cooling = 35;
+    this.cancelFire();
+    this.pulseEnergy = 100;
+    this.pulseRadius = 205;
+    this.pulseDamage = 5;
+    this.pulseFlash = 0;
     this.dashCooldown = this.dashTime = 0;
-    this.dashInterval = 2.8;
+    this.dashInterval = 2.6;
     this.moveX = 0;
     this.moveY = -1;
     this.shake = 0;
     this.beginWave();
   }
   beginWave() {
-    this.spawnLeft = 7 + this.wave * 3;
+    this.spawnLeft = 14 + this.wave * 4;
     this.totalWave = this.spawnLeft;
     this.waveKills = 0;
-    this.spawnTime = 1.1;
+    this.waveElapsed = 0;
+    this.spawnTime = 1;
+    this.hazardTime = 6;
     this.bullets = [];
+    this.hazards = [];
+    this.heat = 0;
+    this.overheated = false;
+    this.cancelFire();
     this.phase = 'play';
   }
+  cancelFire() {
+    this.railCharge = 0;
+    this.wasFiring = false;
+  }
   togglePause() {
-    if (this.phase === 'play') this.phase = 'paused';
-    else if (this.phase === 'paused') this.phase = 'play';
+    if (this.phase === 'play') {
+      this.phase = 'paused';
+      this.cancelFire();
+    } else if (this.phase === 'paused') this.phase = 'play';
+  }
+  switchWeapon() {
+    if (this.phase !== 'play') return false;
+    this.weapon = this.weapon === 'plasma' ? 'rail' : 'plasma';
+    this.cancelFire();
+    this.fireTime = Math.max(this.fireTime, 0.15);
+    return true;
   }
   dash(x = 0, y = 0) {
     if (this.phase !== 'play' || this.dashCooldown > 0) return false;
     const len = Math.hypot(x, y);
     this.dashX = len > 0.1 ? x / len : this.moveX;
     this.dashY = len > 0.1 ? y / len : this.moveY;
-    this.dashTime = 0.18;
+    this.dashTime = 0.17;
     this.dashCooldown = this.dashInterval;
-    this.player.invincible = Math.max(this.player.invincible, 0.32);
+    this.player.invincible = Math.max(this.player.invincible, 0.26);
     this.events.push('dash');
+    return true;
+  }
+  pulse() {
+    if (this.phase !== 'play' || this.pulseEnergy < 100) return false;
+    this.pulseEnergy = 0;
+    this.pulseFlash = 0.45;
+    this.pulseX = this.player.x;
+    this.pulseY = this.player.y;
+    this.shake = 5;
+    this.events.push('pulse');
+    this.player.invincible = Math.max(this.player.invincible, 0.35);
+    this.bullets = this.bullets.filter(
+      (b) =>
+        !b.hostile ||
+        Math.hypot(b.x - this.player.x, b.y - this.player.y) > this.pulseRadius,
+    );
+    for (const e of this.enemies) {
+      if (e.age < 0.65 || e.hp <= 0) continue;
+      const dx = e.x - this.player.x,
+        dy = e.y - this.player.y,
+        d = Math.hypot(dx, dy);
+      if (d < this.pulseRadius + e.r) {
+        this.damageEnemy(e, this.pulseDamage);
+        if (e.kind !== 3) {
+          e.x = clamp(e.x + (dx / Math.max(d, 1)) * 60, 20, this.width - 20);
+          e.y = clamp(e.y + (dy / Math.max(d, 1)) * 60, 20, this.height - 20);
+          e.stun = 0.7;
+          e.state = 'seek';
+          e.cooldown = 1.2;
+        }
+      }
+    }
     return true;
   }
   upgrade(id: UpgradeId) {
     if (this.phase !== 'upgrade' || !this.choices.includes(id)) return false;
     if (id === 'rapid')
-      this.fireInterval = Math.max(0.1, this.fireInterval * 0.8);
+      this.fireInterval = Math.max(0.085, this.fireInterval * 0.85);
     if (id === 'power') this.damage++;
-    if (id === 'spread') this.shotCount = Math.min(5, this.shotCount + 1);
+    if (id === 'spread') this.shotCount = Math.min(4, this.shotCount + 1);
     if (id === 'shield') {
-      this.player.maxHp++;
-      this.player.hp = this.player.maxHp;
+      this.player.maxHp = Math.min(7, this.player.maxHp + 1);
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
     }
-    if (id === 'speed') this.player.speed *= 1.15;
+    if (id === 'speed') this.player.speed *= 1.12;
     if (id === 'dash')
-      this.dashInterval = Math.max(0.7, this.dashInterval * 0.8);
+      this.dashInterval = Math.max(1, this.dashInterval * 0.85);
+    if (id === 'cooling') this.cooling *= 1.25;
+    if (id === 'pulse') {
+      this.pulseRadius += 35;
+      this.pulseDamage += 3;
+    }
     this.wave++;
     this.choices = [];
     this.dashCooldown = 0;
@@ -227,57 +364,100 @@ export class Game {
       this.particles.splice(0, this.particles.length - 500);
   }
   spawn() {
-    const boss = this.wave % 5 === 0 && this.spawnLeft === this.totalWave;
+    const boss = this.wave % 5 === 0 && this.spawnLeft === this.totalWave,
+      roll = this.rng();
     const kind = boss
       ? 3
-      : this.wave >= 3 && this.rng() < 0.24
-        ? 2
-        : this.rng() < 0.28
-          ? 1
-          : 0;
+      : this.wave >= 3 && roll < 0.16
+        ? 5
+        : this.wave >= 2 && roll < 0.35
+          ? 4
+          : roll < 0.58
+            ? 2
+            : roll < 0.8
+              ? 1
+              : 0;
     const side = Math.floor(this.rng() * 4),
-      margin = 30;
+      m = 30;
     let x =
       side === 0
-        ? margin
+        ? m
         : side === 1
-          ? this.width - margin
-          : margin + this.rng() * (this.width - margin * 2);
+          ? this.width - m
+          : m + this.rng() * (this.width - 2 * m);
     let y =
       side === 2
-        ? margin
+        ? m
         : side === 3
-          ? this.height - margin
-          : margin + this.rng() * (this.height - margin * 2);
-    if (Math.hypot(x - this.player.x, y - this.player.y) < 190) {
-      x = this.width - this.player.x;
-      y = this.height - this.player.y;
+          ? this.height - m
+          : m + this.rng() * (this.height - 2 * m);
+    if (Math.hypot(x - this.player.x, y - this.player.y) < 210) {
+      x = this.player.x < this.width / 2 ? this.width - m : m;
+      y = this.player.y < this.height / 2 ? this.height - m : m;
     }
     const hp =
       kind === 3
         ? this.wave === 10
-          ? 110
-          : 60
-        : kind === 2
-          ? 3 + Math.floor(this.wave / 3)
-          : 1 + Math.floor(this.wave / 4);
+          ? 260
+          : 140
+        : kind === 4
+          ? 5 + this.wave
+          : kind === 2 || kind === 5
+            ? 3 + Math.floor(this.wave * 0.65)
+            : 2 + Math.floor(this.wave * 0.45);
     this.enemies.push({
       x,
       y,
-      r: kind === 3 ? 36 : kind === 2 ? 19 : kind === 1 ? 12 : 15,
+      r:
+        kind === 3
+          ? 40
+          : kind === 4
+            ? 22
+            : kind === 2
+              ? 18
+              : kind === 5
+                ? 16
+                : kind === 1
+                  ? 12
+                  : 15,
       hp,
       maxHp: hp,
       kind,
       age: 0,
-      cooldown: 1.7,
+      cooldown: kind === 3 ? 1.5 : 1 + this.rng(),
       hit: 0,
+      state: 'seek',
+      timer: 0,
+      targetAngle: 0,
+      stun: 0,
+      attack: 0,
     });
     this.spawnLeft--;
+  }
+  damageEnemy(e: Enemy, damage: number) {
+    if (e.hp <= 0) return;
+    e.hp -= damage;
+    e.hit = 0.09;
+    if (e.hp > 0) return;
+    this.kills++;
+    this.waveKills++;
+    this.comboKills++;
+    this.combo = Math.min(5, 1 + Math.floor(this.comboKills / 5));
+    this.comboTime = 3;
+    this.score += (e.kind === 3 ? 3000 : e.kind >= 2 ? 220 : 120) * this.combo;
+    this.drops.push({ x: e.x, y: e.y, age: 0 });
+    this.burst(
+      e.x,
+      e.y,
+      e.kind === 3 ? '#c79bff' : '#ff678e',
+      e.kind === 3 ? 45 : 13,
+    );
+    this.events.push('kill');
   }
   hurt() {
     if (this.player.invincible > 0 || this.phase !== 'play') return;
     this.player.hp--;
-    this.player.invincible = 1.4;
+    this.player.invincible = 0.95;
     this.combo = 1;
     this.comboTime = this.comboKills = 0;
     this.shake = 9;
@@ -286,13 +466,59 @@ export class Game {
     if (this.player.hp <= 0) {
       this.phase = 'over';
       this.dashTime = 0;
+      this.cancelFire();
     }
   }
-  update(dt: number, input: { x: number; y: number; dash: boolean }) {
+  hostileShot(e: Enemy, a: number, speed: number) {
+    this.bullets.push({
+      x: e.x,
+      y: e.y,
+      vx: Math.cos(a) * speed,
+      vy: Math.sin(a) * speed,
+      life: 6,
+      damage: 1,
+      hostile: true,
+    });
+  }
+  addHeat(amount: number) {
+    this.heat = clamp(this.heat + amount, 0, 100);
+    if (this.heat >= 100) {
+      this.overheated = true;
+      this.events.push('overheat');
+    }
+  }
+  fireRail() {
+    if (this.railCharge < 0.2 || this.overheated) {
+      this.railCharge = 0;
+      return;
+    }
+    const p = this.player,
+      a = p.angle,
+      charge = this.railCharge;
+    this.bullets.push({
+      x: p.x,
+      y: p.y,
+      vx: Math.cos(a) * 1150,
+      vy: Math.sin(a) * 1150,
+      life: 1.5,
+      damage: (2 + charge * 6) * this.damage,
+      hostile: false,
+      rail: true,
+      pierce: 2 + this.shotCount,
+      hitTargets: new Set(),
+    });
+    this.addHeat(18 + charge * 25);
+    this.railCharge = 0;
+    this.fireTime = 0.3;
+    this.events.push('rail');
+  }
+  update(dt: number, input: Input) {
     if (this.phase !== 'play') return;
     dt = clamp(dt, 0, 0.05);
     this.elapsed += dt;
+    this.waveElapsed += dt;
     this.shake = Math.max(0, this.shake - dt * 26);
+    this.pulseFlash = Math.max(0, this.pulseFlash - dt);
     const p = this.player;
     p.invincible = Math.max(0, p.invincible - dt);
     this.dashCooldown = Math.max(0, this.dashCooldown - dt);
@@ -324,72 +550,144 @@ export class Game {
     }
     p.x = clamp(p.x, 20, this.width - 20);
     p.y = clamp(p.y, 20, this.height - 20);
+    if (input.pulse) this.pulse();
     this.spawnTime -= dt;
-    if (this.spawnLeft > 0 && this.spawnTime <= 0) {
+    if (
+      this.spawnLeft > 0 &&
+      this.spawnTime <= 0 &&
+      this.enemies.length < 22 + this.wave
+    ) {
       this.spawn();
-      this.spawnTime = Math.max(0.38, 1.25 - this.wave * 0.07);
+      this.spawnTime = Math.max(0.26, 0.84 - this.wave * 0.048);
     }
-    const targets = this.enemies.filter((e) => e.age >= 0.65 && e.hp > 0);
-    let nearest: Enemy | undefined,
-      dist = Infinity;
-    for (const e of targets) {
-      const d = Math.hypot(e.x - p.x, e.y - p.y);
-      if (d < dist) {
-        dist = d;
-        nearest = e;
-      }
-    }
-    if (nearest) p.angle = Math.atan2(nearest.y - p.y, nearest.x - p.x);
-    else if (len > 0.05) p.angle = Math.atan2(y, x);
+    if (Number.isFinite(input.aimX) && Number.isFinite(input.aimY))
+      p.angle = Math.atan2(input.aimY! - p.y, input.aimX! - p.x);
+    this.heat = Math.max(
+      0,
+      this.heat -
+        dt * this.cooling * (input.shoot && !this.overheated ? 0.12 : 1),
+    );
+    if (this.overheated && this.heat <= 25) this.overheated = false;
     this.fireTime -= dt;
-    if (nearest && this.fireTime <= 0) {
+    if (
+      this.weapon === 'plasma' &&
+      input.shoot &&
+      !this.overheated &&
+      this.fireTime <= 0
+    ) {
       this.fireTime = this.fireInterval;
       this.events.push('shoot');
+      this.addHeat(8 + this.shotCount);
       for (let i = 0; i < this.shotCount; i++) {
-        const a = p.angle + (i - (this.shotCount - 1) / 2) * 0.15;
+        const a = p.angle + (i - (this.shotCount - 1) / 2) * 0.13;
         this.bullets.push({
-          x: p.x + Math.cos(a) * 19,
-          y: p.y + Math.sin(a) * 19,
-          vx: Math.cos(a) * 650,
-          vy: Math.sin(a) * 650,
-          life: 1.8,
+          x: p.x,
+          y: p.y,
+          vx: Math.cos(a) * 740,
+          vy: Math.sin(a) * 740,
+          life: 1.2,
           damage: this.damage,
           hostile: false,
         });
       }
     }
+    if (this.weapon === 'rail') {
+      if (input.shoot && !this.overheated && this.fireTime <= 0)
+        this.railCharge = Math.min(1, this.railCharge + dt / 0.85);
+      if (!input.shoot && this.wasFiring) this.fireRail();
+    }
+    this.wasFiring = !!input.shoot;
     for (const e of this.enemies) {
       e.age += dt;
       e.hit = Math.max(0, e.hit - dt);
       if (e.age < 0.65 || e.hp <= 0) continue;
+      if ((e.stun ?? 0) > 0) {
+        e.stun = Math.max(0, (e.stun ?? 0) - dt);
+        continue;
+      }
       const a = Math.atan2(p.y - e.y, p.x - e.x),
         d = Math.hypot(p.x - e.x, p.y - e.y);
-      const speed =
-        (e.kind === 3 ? 43 : e.kind === 1 ? 125 : e.kind === 2 ? 57 : 78) *
-        (1 + this.wave * 0.035);
-      const advance = e.kind === 2 && d < 270 ? -0.25 : 1;
-      e.x += Math.cos(a) * speed * dt * advance;
-      e.y += Math.sin(a) * speed * dt * advance;
-      if (e.kind >= 2) {
-        e.cooldown -= dt;
-        if (e.cooldown <= 0) {
-          e.cooldown = e.kind === 3 ? 1.35 : 2.8;
-          const count = e.kind === 3 ? 12 : 1;
-          for (let i = 0; i < count; i++) {
-            const angle = e.kind === 3 ? a + (i * Math.PI * 2) / count : a;
-            this.bullets.push({
-              x: e.x,
-              y: e.y,
-              vx: Math.cos(angle) * (e.kind === 3 ? 150 : 185),
-              vy: Math.sin(angle) * (e.kind === 3 ? 150 : 185),
-              life: 7,
-              damage: 1,
-              hostile: true,
-            });
+      e.cooldown -= dt;
+      let moveAngle = a,
+        speed =
+          (e.kind === 3
+            ? 57
+            : e.kind === 1
+              ? 157
+              : e.kind === 2
+                ? 70
+                : e.kind === 5
+                  ? 80
+                  : e.kind === 4
+                    ? 91
+                    : 103) *
+          (1 + this.wave * 0.045);
+      if (e.kind === 1 && d > 110)
+        moveAngle += Math.sin(e.age * 1.7) > 0.0 ? 0.65 : -0.65;
+      if ((e.kind === 2 || e.kind === 5) && d < (e.kind === 5 ? 400 : 285))
+        speed *= -0.45;
+      if (e.kind === 4 || e.kind === 5) {
+        if (e.state === 'windup') {
+          speed = 0;
+          e.timer = (e.timer ?? 0) - dt;
+          if ((e.timer ?? 0) <= 0) {
+            if (e.kind === 4) {
+              e.state = 'charge';
+              e.timer = 0.55;
+              this.events.push('charge');
+            } else {
+              this.hostileShot(e, e.targetAngle ?? a, 460);
+              e.state = 'seek';
+              e.cooldown = 2.2;
+            }
           }
+        } else if (e.state === 'charge') {
+          moveAngle = e.targetAngle ?? a;
+          speed = 480 + this.wave * 10;
+          e.timer = (e.timer ?? 0) - dt;
+          if ((e.timer ?? 0) <= 0) {
+            e.state = 'seek';
+            e.cooldown = 1.6;
+          }
+        } else if (e.cooldown <= 0) {
+          e.state = 'windup';
+          e.targetAngle = a;
+          e.timer = e.kind === 4 ? 0.7 : 0.95;
+          speed = 0;
         }
       }
-      if (d < e.r + 12) this.hurt();
+      e.x = clamp(e.x + Math.cos(moveAngle) * speed * dt, 18, this.width - 18);
+      e.y = clamp(e.y + Math.sin(moveAngle) * speed * dt, 18, this.height - 18);
+      if (e.kind === 2 && e.cooldown <= 0) {
+        e.cooldown = Math.max(1.1, 2.1 - this.wave * 0.07);
+        for (let i = -1; i <= 1; i++)
+          this.hostileShot(e, a + i * 0.17, 205 + this.wave * 7);
+      }
+      if (e.kind === 3 && e.cooldown <= 0) {
+        e.attack = (e.attack ?? 0) + 1;
+        const enraged = e.hp < e.maxHp * 0.45;
+        e.cooldown = enraged ? 0.85 : 1.35;
+        const count = enraged ? 20 : 16,
+          offset = e.age * 0.43;
+        for (let i = 0; i < count; i++)
+          this.hostileShot(
+            e,
+            offset + (i * Math.PI * 2) / count,
+            enraged ? 225 : 185,
+          );
+        if (e.attack % 2 === 0)
+          for (let i = -2; i <= 2; i++) this.hostileShot(e, a + i * 0.12, 300);
+        if (e.attack % 3 === 0)
+          this.hazards.push({
+            x: p.x,
+            y: p.y,
+            r: 85,
+            age: 0,
+            warning: 1.15,
+            duration: 1.8,
+          });
+      }
+      if (Math.hypot(e.x - p.x, e.y - p.y) < e.r + 11) this.hurt();
     }
     for (const b of this.bullets) {
       const oldX = b.x,
@@ -398,44 +696,32 @@ export class Game {
       b.y += b.vy * dt;
       b.life -= dt;
       if (b.life <= 0) continue;
+      const dx = b.x - oldX,
+        dy = b.y - oldY,
+        dd = dx * dx + dy * dy;
+      const intersects = (tx: number, ty: number, r: number) => {
+        const t = dd
+          ? clamp(((tx - oldX) * dx + (ty - oldY) * dy) / dd, 0, 1)
+          : 0;
+        return Math.hypot(oldX + t * dx - tx, oldY + t * dy - ty) < r;
+      };
       if (b.hostile) {
-        if (Math.hypot(b.x - p.x, b.y - p.y) < 16) {
+        if (intersects(p.x, p.y, 15)) {
           this.hurt();
           b.life = 0;
         }
         continue;
       }
-      // Swept collision keeps fast shots from passing through small targets.
-      const dx = b.x - oldX,
-        dy = b.y - oldY,
-        dd = dx * dx + dy * dy;
       for (const e of this.enemies) {
-        if (e.age < 0.65 || e.hp <= 0) continue;
-        const t = dd
-          ? clamp(((e.x - oldX) * dx + (e.y - oldY) * dy) / dd, 0, 1)
-          : 0;
-        if (Math.hypot(oldX + t * dx - e.x, oldY + t * dy - e.y) < e.r + 4) {
-          b.life = 0;
-          e.hp -= b.damage;
-          e.hit = 0.09;
-          if (e.hp <= 0) {
-            this.kills++;
-            this.waveKills++;
-            this.comboKills++;
-            this.combo = Math.min(5, 1 + Math.floor(this.comboKills / 5));
-            this.comboTime = 4;
-            this.score +=
-              (e.kind === 3 ? 2000 : e.kind === 2 ? 180 : 100) * this.combo;
-            this.drops.push({ x: e.x, y: e.y, age: 0 });
-            this.burst(
-              e.x,
-              e.y,
-              e.kind === 3 ? '#c79bff' : '#ff678e',
-              e.kind === 3 ? 45 : 13,
-            );
-            this.events.push('kill');
-          }
-          break;
+        if (e.age < 0.65 || e.hp <= 0 || b.hitTargets?.has(e)) continue;
+        if (intersects(e.x, e.y, e.r + (b.rail ? 6 : 4))) {
+          this.damageEnemy(e, b.damage);
+          b.hitTargets?.add(e);
+          if (b.rail) {
+            b.pierce = (b.pierce ?? 1) - 1;
+            if (b.pierce <= 0) b.life = 0;
+          } else b.life = 0;
+          if (b.life <= 0) break;
         }
       }
     }
@@ -448,21 +734,41 @@ export class Game {
         b.y > -60 &&
         b.y < this.height + 60,
     );
+    this.hazardTime -= dt;
+    if (this.wave >= 3 && this.hazardTime <= 0) {
+      this.hazardTime = Math.max(3.5, 6 - this.wave * 0.22);
+      this.hazards.push({
+        x: clamp(p.x + this.moveX * 70, 70, this.width - 70),
+        y: clamp(p.y + this.moveY * 70, 70, this.height - 70),
+        r: 65 + this.wave * 2,
+        age: 0,
+        warning: 1.35,
+        duration: 2,
+      });
+    }
+    for (const z of this.hazards) {
+      z.age += dt;
+      if (z.age >= z.warning && Math.hypot(p.x - z.x, p.y - z.y) < z.r + 10)
+        this.hurt();
+    }
+    this.hazards = this.hazards.filter((z) => z.age < z.warning + z.duration);
     for (const d of this.drops) {
       d.age += dt;
       const dist = Math.hypot(p.x - d.x, p.y - d.y);
-      if (dist < 125 && dist > 0) {
-        d.x += ((p.x - d.x) / dist) * dt * 360;
-        d.y += ((p.y - d.y) / dist) * dt * 360;
+      if (dist < 95 && dist > 0) {
+        const step = Math.min(dist, dt * 340);
+        d.x += ((p.x - d.x) / dist) * step;
+        d.y += ((p.y - d.y) / dist) * step;
       }
-      if (dist < 22) {
+      if (Math.hypot(d.x - p.x, d.y - p.y) < 22) {
         d.age = 99;
-        this.score += 35 * this.combo;
-        this.comboTime = 4;
+        this.score += 40 * this.combo;
+        this.pulseEnergy = Math.min(100, this.pulseEnergy + 10);
+        this.comboTime = 3;
         this.events.push('pickup');
       }
     }
-    this.drops = this.drops.filter((d) => d.age < 12);
+    this.drops = this.drops.filter((d) => d.age < 18);
     for (const a of this.particles) {
       a.life -= dt;
       a.x += a.vx * dt;
@@ -476,17 +782,16 @@ export class Game {
       this.spawnLeft === 0 &&
       this.enemies.length === 0
     ) {
-      this.score += this.drops.length * 35 * this.combo;
-      this.drops = [];
       this.bullets = [];
+      this.hazards = [];
+      this.cancelFire();
       if (this.wave === 10) {
         this.phase = 'win';
-        this.score += this.player.hp * 500;
+        this.score += this.player.hp * 600;
       } else {
         this.phase = 'upgrade';
-        this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
         const pool = (Object.keys(UPGRADES) as UpgradeId[]).filter(
-          (id) => id !== 'spread' || this.shotCount < 5,
+          (id) => id !== 'spread' || this.shotCount < 4,
         );
         for (let i = pool.length - 1; i > 0; i--) {
           const j = Math.floor(this.rng() * (i + 1));

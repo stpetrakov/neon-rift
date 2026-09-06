@@ -971,3 +971,249 @@ kbd {
     display: none;
   }
 }
+.arena {
+  cursor: crosshair;
+}
+.combat-console .arena-wrap {
+  height: clamp(300px, calc(100svh - 380px), 850px);
+  min-height: 300px;
+}
+.combat-bar {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.3fr) minmax(110px, 1fr) auto auto;
+  gap: 16px;
+  align-items: center;
+  padding: 13px 25px;
+  background: #101c1b;
+  border-top: 1px solid #304837;
+  flex-shrink: 0;
+}
+.weapon-button,
+.ability-button {
+  border: 1px solid #415441;
+  border-radius: 5px;
+  background: #15251e;
+  color: #dff7ce;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  font-size: 12px;
+}
+.weapon-button {
+  justify-content: space-between;
+  text-align: left;
+}
+.weapon-button b {
+  font-size: 13px;
+  letter-spacing: 1px;
+  display: block;
+}
+.weapon-button small {
+  display: block;
+  color: #a0bba9;
+  font-size: 11px;
+  margin-top: 5px;
+}
+.weapon-button:hover:not(:disabled),
+.ability-button:hover:not(:disabled) {
+  background: #28412b;
+  border-color: #bcff5c;
+}
+.pulse-button {
+  color: #a2edff;
+  border-color: #395361;
+}
+.pulse-button b {
+  margin-left: 5px;
+}
+.heat-meter > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  font: 11px monospace;
+  color: #afc2b1;
+  margin-bottom: 9px;
+  gap: 10px;
+}
+.heat-meter [data-slot='progress-indicator'] {
+  background: #ffad69;
+}
+.heat-meter.locked [data-slot='progress-indicator'] {
+  background: #ff5e83;
+}
+.heat-meter.locked > div:first-child {
+  color: #ff8ba4;
+}
+.heat-warning {
+  position: absolute;
+  top: 73px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 17px;
+  border: 1px solid #ec6087;
+  background: #35152bec;
+  color: #ffb0c6;
+  font: 13px monospace;
+  letter-spacing: 1px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.aim-joystick {
+  border-color: #99dfff;
+  background: #67bdf514;
+}
+.aim-joystick > span {
+  border-color: #99dfff;
+  background: #67bdf555;
+}
+.touch-zone {
+  display: none;
+  position: absolute;
+  bottom: 57px;
+  font: 10px monospace;
+  letter-spacing: 1px;
+  color: #8ca69b;
+  pointer-events: none;
+}
+.left-zone {
+  left: 22px;
+}
+.right-zone {
+  right: 22px;
+}
+.combat-instructions {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #bbcec0;
+  margin: 0 0 18px;
+  max-width: 440px;
+}
+.mobile-start-hint {
+  display: none;
+}
+.start-screen h1 {
+  font-size: clamp(65px, 7vw, 105px);
+  margin: 22px 0 19px;
+}
+.start-screen .start-hint {
+  margin-bottom: 15px;
+  margin-left: 0;
+}
+.start-screen .intro {
+  margin-bottom: 19px;
+}
+.start-screen {
+  justify-content: safe center;
+}
+.footer > div {
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+.game-shell:is(:fullscreen, .expanded) .combat-bar {
+  flex-shrink: 0;
+}
+@media (max-width: 1000px) {
+  .combat-bar {
+    gap: 9px;
+    padding: 10px 15px;
+    grid-template-columns: minmax(175px, 1.4fr) minmax(90px, 1fr) auto auto;
+  }
+  .ability-button kbd {
+    display: none;
+  }
+  .ability-button {
+    font-size: 11px;
+    padding: 9px;
+    gap: 6px;
+  }
+}
+@media (max-width: 650px) {
+  .combat-bar {
+    grid-template-columns: 1.3fr 1fr 1fr;
+    gap: 7px;
+    padding: 10px;
+  }
+  .weapon-button {
+    grid-column: 1 / 3;
+    padding: 8px 10px;
+  }
+  .heat-meter {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .pulse-button {
+    grid-column: 1 / 3;
+  }
+  .dash-button {
+    grid-column: 3;
+  }
+  .ability-button {
+    min-height: 40px;
+    font-size: 12px;
+  }
+  .combat-instructions {
+    font-size: 12px;
+    max-width: 290px;
+    line-height: 1.55;
+  }
+  .start-screen {
+    padding: 42px 24px;
+  }
+  .start-screen h1 {
+    font-size: 76px;
+    margin: 20px 0 18px;
+  }
+  .start-screen .start-controls {
+    font-size: 11px;
+    gap: 10px;
+  }
+  .arena-wrap {
+    min-height: 590px;
+  }
+  .combat-console .arena-wrap {
+    height: clamp(280px, calc(100svh - 330px), 1000px);
+    min-height: 280px;
+  }
+  .statusbar {
+    display: none;
+  }
+  .start-screen .intro {
+    font-size: 14px;
+  }
+  .footer-tip {
+    display: none;
+  }
+}
+@media (pointer: coarse) {
+  .touch-zone {
+    display: block;
+  }
+  .mobile-start-hint {
+    display: block;
+    font-size: 12px;
+    max-width: 300px;
+    line-height: 1.5;
+    color: #b3d7df;
+    margin: 0 0 14px;
+  }
+  .start-controls {
+    display: none;
+  }
+  .start-screen .combat-instructions {
+    margin-top: 18px;
+  }
+  .arena-coord.bottom-left {
+    max-width: 65%;
+    font-size: 8px;
+  }
+}
+@media (max-height: 650px) {
+  .game-shell:is(:fullscreen, .expanded) .combat-bar {
+    padding-block: 7px;
+  }
+  .game-shell:is(:fullscreen, .expanded) .statusbar {
+    display: none;
+  }
+}

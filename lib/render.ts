@@ -136,6 +136,54 @@ export function drawGame(
     c.stroke();
     c.shadowBlur = 0;
   } else {
+    for (const z of g.hazards) {
+      const active = z.age >= z.warning;
+      c.save();
+      c.strokeStyle = active ? '#ff5879' : '#ff9871';
+      c.fillStyle = active ? '#f542663b' : '#f58c6810';
+      c.lineWidth = active ? 3 : 1.5;
+      c.setLineDash(active ? [] : [6, 7]);
+      c.beginPath();
+      c.arc(z.x, z.y, z.r, 0, TAU);
+      c.fill();
+      c.stroke();
+      c.setLineDash([]);
+      if (!active) {
+        c.lineWidth = 3;
+        c.beginPath();
+        c.arc(
+          z.x,
+          z.y,
+          z.r,
+          -Math.PI / 2,
+          -Math.PI / 2 + Math.min(1, z.age / z.warning) * TAU,
+        );
+        c.stroke();
+      }
+      c.font = '12px monospace';
+      c.textAlign = 'center';
+      c.fillStyle = '#ffb49d';
+      c.fillText(active ? 'РАЗЛОМ' : 'ВНИМАНИЕ', z.x, z.y + 4);
+      c.restore();
+    }
+    if (g.pulseFlash > 0) {
+      c.save();
+      c.globalAlpha = g.pulseFlash / 0.45;
+      c.strokeStyle = '#76e9ff';
+      c.shadowColor = '#76e9ff';
+      c.shadowBlur = 20;
+      c.lineWidth = 4;
+      c.beginPath();
+      c.arc(
+        g.pulseX,
+        g.pulseY,
+        g.pulseRadius * (1 - g.pulseFlash / 0.45),
+        0,
+        TAU,
+      );
+      c.stroke();
+      c.restore();
+    }
     for (const d of g.drops) {
       c.save();
       c.translate(d.x, d.y);
@@ -148,7 +196,15 @@ export function drawGame(
     }
     for (const e of g.enemies) {
       const color =
-        e.kind === 3 ? '#bc8dff' : e.kind === 2 ? '#ffb369' : '#ff678e';
+        e.kind === 3
+          ? '#bc8dff'
+          : e.kind === 5
+            ? '#73dafa'
+            : e.kind === 4
+              ? '#ff764a'
+              : e.kind === 2
+                ? '#ffb369'
+                : '#ff678e';
       c.strokeStyle = e.hit > 0 ? '#ffffff' : color;
       c.fillStyle =
         e.hit > 0 ? '#ffffff' : e.kind === 3 ? '#3b235d' : '#351b2b';
@@ -164,16 +220,32 @@ export function drawGame(
         c.shadowBlur = 0;
         continue;
       }
+      if (e.state === 'windup') {
+        c.save();
+        c.strokeStyle = color;
+        c.globalAlpha = 0.5 + Math.sin(time * 20) * 0.2;
+        c.lineWidth = e.kind === 4 ? 3 : 1.5;
+        c.setLineDash(e.kind === 4 ? [10, 8] : [3, 7]);
+        const length = e.kind === 4 ? 330 : 1500,
+          a = e.targetAngle ?? 0;
+        c.beginPath();
+        c.moveTo(e.x, e.y);
+        c.lineTo(e.x + Math.cos(a) * length, e.y + Math.sin(a) * length);
+        c.stroke();
+        c.restore();
+      }
       const rotation =
-        e.kind === 1
-          ? Math.atan2(g.player.y - e.y, g.player.x - e.x)
-          : time * (e.kind === 3 ? 0.4 : 0.65);
+        e.kind === 4 || e.kind === 5
+          ? (e.targetAngle ?? 0)
+          : e.kind === 1
+            ? Math.atan2(g.player.y - e.y, g.player.x - e.x)
+            : time * (e.kind === 3 ? 0.4 : 0.65);
       polygon(
         c,
         e.x,
         e.y,
         e.r,
-        e.kind === 3 ? 6 : e.kind === 1 ? 3 : 4,
+        e.kind === 3 ? 6 : e.kind === 5 ? 5 : e.kind === 1 ? 3 : 4,
         rotation,
       );
       c.fill();
@@ -186,6 +258,13 @@ export function drawGame(
         c.fillRect(e.x - 45, e.y - 53, 90, 4);
         c.fillStyle = color;
         c.fillRect(e.x - 45, e.y - 53, (90 * e.hp) / e.maxHp, 4);
+        c.font = '12px monospace';
+        c.textAlign = 'center';
+        c.fillText(
+          e.hp < e.maxHp * 0.45 ? 'БОСС · ЯРОСТЬ' : 'СТРАЖ РАЗЛОМА',
+          e.x,
+          e.y - 62,
+        );
       } else {
         c.fillStyle = color;
         c.fillRect(e.x - 2, e.y - 2, 4, 4);
@@ -193,16 +272,19 @@ export function drawGame(
       c.shadowBlur = 0;
     }
     for (const b of g.bullets) {
-      c.strokeStyle = b.hostile ? '#ff916f' : '#ceff86';
+      c.strokeStyle = b.hostile ? '#ff916f' : b.rail ? '#9fdcff' : '#ceff86';
       c.fillStyle = c.strokeStyle;
       c.shadowColor = c.strokeStyle;
       c.shadowBlur = 10;
-      c.lineWidth = b.hostile ? 3 : 3.5;
+      c.lineWidth = b.hostile ? 3 : b.rail ? 6 : 3.5;
       c.beginPath();
       if (b.hostile) c.arc(b.x, b.y, 4, 0, TAU);
       else {
         c.moveTo(b.x, b.y);
-        c.lineTo(b.x - b.vx * 0.019, b.y - b.vy * 0.019);
+        c.lineTo(
+          b.x - b.vx * (b.rail ? 0.085 : 0.019),
+          b.y - b.vy * (b.rail ? 0.085 : 0.019),
+        );
       }
       c.stroke();
       c.shadowBlur = 0;
@@ -214,6 +296,27 @@ export function drawGame(
     }
     c.globalAlpha = 1;
     if (g.player.hp > 0) {
+      if (g.weapon === 'rail' && g.railCharge > 0) {
+        const p = g.player;
+        c.save();
+        c.strokeStyle = '#9fdcff';
+        c.globalAlpha = 0.3 + g.railCharge * 0.6;
+        c.lineWidth = g.railCharge > 0.95 ? 2.5 : 1;
+        c.setLineDash([6, 9]);
+        c.beginPath();
+        c.moveTo(p.x, p.y);
+        c.lineTo(
+          p.x + Math.cos(p.angle) * 1500,
+          p.y + Math.sin(p.angle) * 1500,
+        );
+        c.stroke();
+        c.setLineDash([]);
+        c.lineWidth = 3;
+        c.beginPath();
+        c.arc(p.x, p.y, 34, -Math.PI / 2, -Math.PI / 2 + g.railCharge * TAU);
+        c.stroke();
+        c.restore();
+      }
       c.globalAlpha =
         g.player.invincible > 0 ? 0.55 + 0.45 * Math.sin(time * 28) ** 2 : 1;
       ship(c, g.player.x, g.player.y, g.player.angle);

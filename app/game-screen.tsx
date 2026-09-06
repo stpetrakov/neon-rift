@@ -1,6 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import {
   ArrowUpRight,
   AudioLines,
@@ -15,7 +20,7 @@ import {
   Minimize2,
 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
-import { Game, UPGRADES, type UpgradeId } from '@/lib/game';
+import { Game, UPGRADES, type UpgradeId, type Weapon } from '@/lib/game';
 import { drawGame } from '@/lib/render';
 
 const fmt = (n: number) => Math.floor(n).toLocaleString('ru-RU');
@@ -29,6 +34,20 @@ export default function Home() {
   const gameRef = useRef<Game | null>(null);
   const keys = useRef(new Set<string>());
   const touch = useRef({ id: -1, x: 0, y: 0, dx: 0, dy: 0 });
+  const touchAim = useRef({ id: -1, x: 0, y: 0, dx: 0, dy: 0 });
+  const pointer = useRef({
+    id: -1,
+    x: 500,
+    y: 200,
+    active: false,
+    down: false,
+  });
+  const [aimStick, setAimStick] = useState<{
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+  } | null>(null);
   const soundRef = useRef(true);
   const audioRef = useRef<AudioContext | null>(null);
   const [sound, setSound] = useState(true);
@@ -37,8 +56,13 @@ export default function Home() {
     phase: 'menu',
     wave: 1,
     score: 0,
-    hp: 5,
-    maxHp: 5,
+    hp: 4,
+    maxHp: 4,
+    weapon: 'plasma' as Weapon,
+    heat: 0,
+    overheated: false,
+    charge: 0,
+    energy: 100,
     dash: 0,
     combo: 1,
     progress: 0,
@@ -69,7 +93,13 @@ export default function Home() {
             ? 160
             : kind === 'pickup'
               ? 980
-              : 250;
+              : kind === 'rail'
+                ? 1200
+                : kind === 'pulse'
+                  ? 65
+                  : kind === 'overheat'
+                    ? 130
+                    : 250;
     osc.type = kind === 'hit' ? 'sawtooth' : 'sine';
     osc.frequency.setValueAtTime(f, ac.currentTime);
     osc.frequency.exponentialRampToValueAtTime(
@@ -96,6 +126,96 @@ export default function Home() {
     touch.current.id = -1;
     touch.current.dx = touch.current.dy = 0;
     setStick(null);
+    touchAim.current.id = -1;
+    touchAim.current.dx = touchAim.current.dy = 0;
+    pointer.current.down = false;
+    pointer.current.id = -1;
+    setAimStick(null);
+    gameRef.current?.cancelFire();
+  }
+  function movePointer(e: ReactPointerEvent<HTMLCanvasElement>) {
+    const r = e.currentTarget.getBoundingClientRect();
+    if (e.pointerType !== 'touch') {
+      const g = gameRef.current;
+      if (g) {
+        pointer.current.x = ((e.clientX - r.left) / r.width) * g.width;
+        pointer.current.y = ((e.clientY - r.top) / r.height) * g.height;
+        pointer.current.active = true;
+      }
+      return;
+    }
+    const isAim = touchAim.current.id === e.pointerId;
+    const control = isAim ? touchAim.current : touch.current;
+    if (control.id !== e.pointerId) return;
+    const dx = e.clientX - control.x,
+      dy = e.clientY - control.y,
+      len = Math.max(45, Math.hypot(dx, dy));
+    control.dx = dx / len;
+    control.dy = dy / len;
+    const update = isAim ? setAimStick : setStick;
+    update((s) =>
+      s ? { ...s, dx: (dx / len) * 34, dy: (dy / len) * 34 } : null,
+    );
+  }
+  function pressPointer(e: ReactPointerEvent<HTMLCanvasElement>) {
+    if (gameRef.current?.phase !== 'play') return;
+    e.preventDefault();
+    e.currentTarget.focus();
+    if (e.pointerType !== 'touch') {
+      movePointer(e);
+      if (e.button === 2) {
+        gameRef.current?.pulse();
+        return;
+      }
+      if (e.button !== 0) return;
+      pointer.current.id = e.pointerId;
+      pointer.current.down = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect(),
+      isAim = e.clientX - r.left > r.width / 2;
+    const control = isAim ? touchAim : touch;
+    if (control.current.id !== -1) return;
+    pointer.current.active = false;
+    control.current = {
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      dx: 0,
+      dy: 0,
+    };
+    const update = isAim ? setAimStick : setStick;
+    update({ x: e.clientX - r.left, y: e.clientY - r.top, dx: 0, dy: 0 });
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function releasePointer(id: number) {
+    if (pointer.current.id === id) {
+      pointer.current.down = false;
+      pointer.current.id = -1;
+    }
+    if (touch.current.id === id) {
+      touch.current.id = -1;
+      touch.current.dx = touch.current.dy = 0;
+      setStick(null);
+    }
+    if (touchAim.current.id === id) {
+      touchAim.current.id = -1;
+      touchAim.current.dx = touchAim.current.dy = 0;
+      setAimStick(null);
+    }
+  }
+  function switchWeapon() {
+    gameRef.current?.switchWeapon();
+    canvasRef.current?.focus();
+  }
+  function triggerPulse() {
+    gameRef.current?.pulse();
+    canvasRef.current?.focus();
+  }
+  function triggerDash() {
+    gameRef.current?.dash(touch.current.dx, touch.current.dy);
+    canvasRef.current?.focus();
   }
   function start() {
     unlockAudio();
@@ -175,7 +295,7 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const stored = Number(localStorage.getItem('neon-rift-best'));
+      const stored = Number(localStorage.getItem('neon-rift-v2-best'));
       if (Number.isFinite(stored)) setBest(Math.max(0, stored));
     } catch {}
     const game = new Game();
@@ -211,6 +331,14 @@ export default function Home() {
         pause();
         return;
       }
+      if (!e.repeat && e.code === 'KeyQ') {
+        switchWeapon();
+        return;
+      }
+      if (!e.repeat && e.code === 'KeyE') {
+        triggerPulse();
+        return;
+      }
       if (
         e.target instanceof HTMLButtonElement ||
         e.target instanceof HTMLInputElement
@@ -231,6 +359,7 @@ export default function Home() {
       keys.current.add(e.code);
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);
+    const release = (e: PointerEvent) => releasePointer(e.pointerId);
     const blur = () => {
       clearInput();
       if (game.phase === 'play') game.togglePause();
@@ -240,6 +369,8 @@ export default function Home() {
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
     window.addEventListener('blur', blur);
     document.addEventListener('visibilitychange', visibility);
     let raf = 0,
@@ -250,7 +381,23 @@ export default function Home() {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const k = keys.current;
+      const aiming = touchAim.current.id !== -1;
+      const aimX = aiming
+        ? game.player.x + touchAim.current.dx * 400
+        : pointer.current.active
+          ? pointer.current.x
+          : undefined;
+      const aimY = aiming
+        ? game.player.y + touchAim.current.dy * 400
+        : pointer.current.active
+          ? pointer.current.y
+          : undefined;
       game.update(dt, {
+        aimX,
+        aimY,
+        shoot: aiming
+          ? Math.hypot(touchAim.current.dx, touchAim.current.dy) > 0.2
+          : pointer.current.down,
         x:
           Number(k.has('KeyD') || k.has('ArrowRight')) -
           Number(k.has('KeyA') || k.has('ArrowLeft')) +
@@ -271,6 +418,11 @@ export default function Home() {
           score: game.score,
           hp: game.player.hp,
           maxHp: game.player.maxHp,
+          weapon: game.weapon,
+          heat: game.heat,
+          overheated: game.overheated,
+          charge: game.railCharge,
+          energy: game.pulseEnergy,
           dash: game.dashCooldown,
           combo: game.combo,
           progress: game.waveProgress,
@@ -284,7 +436,7 @@ export default function Home() {
         setBest((old) => {
           const next = Math.max(old, game.score);
           try {
-            localStorage.setItem('neon-rift-best', String(next));
+            localStorage.setItem('neon-rift-v2-best', String(next));
           } catch {}
           return next;
         });
@@ -298,6 +450,8 @@ export default function Home() {
       observer.disconnect();
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
       window.removeEventListener('blur', blur);
       document.removeEventListener('visibilitychange', visibility);
       void audioRef.current?.close();
@@ -370,7 +524,10 @@ export default function Home() {
           </button>
         </div>
       </header>
-      <section className="console" aria-label="Игровая арена">
+      <section
+        className={`console${view.phase === 'menu' ? '' : ' combat-console'}`}
+        aria-label="Игровая арена"
+      >
         <div className="telemetry">
           <div className="wave">
             <span className="live-dot" /> ВОЛНА{' '}
@@ -397,54 +554,13 @@ export default function Home() {
             ref={canvasRef}
             className="arena"
             tabIndex={0}
-            aria-label="Игровое поле. WASD или стрелки — движение, пробел — рывок, P — пауза. Стрельба автоматическая."
-            onPointerDown={(e) => {
-              if (
-                e.pointerType === 'mouse' ||
-                view.phase !== 'play' ||
-                touch.current.id !== -1
-              )
-                return;
-              e.preventDefault();
-              e.currentTarget.setPointerCapture(e.pointerId);
-              const r = e.currentTarget.getBoundingClientRect();
-              touch.current = {
-                id: e.pointerId,
-                x: e.clientX,
-                y: e.clientY,
-                dx: 0,
-                dy: 0,
-              };
-              setStick({
-                x: e.clientX - r.left,
-                y: e.clientY - r.top,
-                dx: 0,
-                dy: 0,
-              });
-            }}
-            onPointerMove={(e) => {
-              if (touch.current.id !== e.pointerId) return;
-              const dx = e.clientX - touch.current.x,
-                dy = e.clientY - touch.current.y,
-                len = Math.max(45, Math.hypot(dx, dy));
-              touch.current.dx = dx / len;
-              touch.current.dy = dy / len;
-              setStick((s) =>
-                s ? { ...s, dx: (dx / len) * 34, dy: (dy / len) * 34 } : null,
-              );
-            }}
-            onPointerUp={(e) => {
-              if (touch.current.id === e.pointerId) {
-                touch.current.id = -1;
-                touch.current.dx = touch.current.dy = 0;
-                setStick(null);
-              }
-            }}
-            onPointerCancel={() => {
-              touch.current.id = -1;
-              touch.current.dx = touch.current.dy = 0;
-              setStick(null);
-            }}
+            aria-label="Игровое поле. WASD — движение, мышь — прицел, ЛКМ — огонь, Q — оружие, E — импульс, пробел — рывок. На телефоне: левый джойстик — движение, правый — прицел и огонь."
+            onPointerDown={pressPointer}
+            onPointerMove={movePointer}
+            onPointerUp={(e) => releasePointer(e.pointerId)}
+            onPointerCancel={(e) => releasePointer(e.pointerId)}
+            onLostPointerCapture={(e) => releasePointer(e.pointerId)}
+            onContextMenu={(e) => e.preventDefault()}
           >
             Для игры нужен браузер с поддержкой Canvas.
           </canvas>
@@ -452,7 +568,11 @@ export default function Home() {
             SECTOR 07 <span>↗</span>
           </div>
           <div className="arena-coord bottom-left" aria-hidden="true">
-            {active ? 'AUTO-TARGET ONLINE' : 'AWAITING PILOT'}
+            {active
+              ? view.weapon === 'rail'
+                ? 'УДЕРЖИВАЙ ОГОНЬ → ОТПУСТИ'
+                : 'СТРЕЛЯЙ КОРОТКИМИ ОЧЕРЕДЯМИ'
+              : 'MANUAL COMBAT / V2'}
           </div>
           <div className="arena-coord bottom-right" aria-hidden="true">
             {Math.floor(view.elapsed / 60)}:
@@ -469,17 +589,13 @@ export default function Home() {
                   ×{view.combo} <span>КОМБО</span>
                 </div>
               )}
-              <button
-                className="touch-dash"
-                aria-label="Рывок"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  gameRef.current?.dash(touch.current.dx, touch.current.dy);
-                }}
-              >
-                <Zap size={24} />
-                РЫВОК
-              </button>
+              {view.overheated && (
+                <div className="heat-warning" role="status">
+                  ПЕРЕГРЕВ · ОСТЫНЬ
+                </div>
+              )}
+              <span className="touch-zone left-zone">ДВИЖЕНИЕ</span>
+              <span className="touch-zone right-zone">ПРИЦЕЛ / ОГОНЬ</span>
             </>
           )}
           {stick && (
@@ -489,10 +605,22 @@ export default function Home() {
               />
             </div>
           )}
+          {aimStick && (
+            <div
+              className="joystick aim-joystick"
+              style={{ left: aimStick.x, top: aimStick.y }}
+            >
+              <span
+                style={{
+                  transform: `translate(${aimStick.dx}px, ${aimStick.dy}px)`,
+                }}
+              />
+            </div>
+          )}
           {view.phase === 'menu' && (
             <div className="screen-overlay start-screen">
               <div className="eyebrow">
-                <span /> СИГНАЛ ОБНАРУЖЕН
+                <span /> ПРОТОКОЛ V2 · РУЧНОЙ БОЙ
               </div>
               <h1>
                 NEON
@@ -503,21 +631,33 @@ export default function Home() {
               <p className="intro">
                 Один пилот. Десять волн.
                 <br />
-                Прорви кольцо. Закрой разлом.
+                Целься. Меняй оружие. Не перегревайся.
               </p>
               <button className="primary-button" onClick={start}>
                 ВОЙТИ В РАЗЛОМ <ArrowUpRight size={23} />
               </button>
-              <span className="start-hint">или нажми ENTER</span>
+              <span className="start-hint">
+                WASD — движение · SPACE — рывок
+              </span>
+              <p className="combat-instructions">
+                Плазма: удерживай ЛКМ, делай паузы для охлаждения.
+                <br />
+                Рельсотрон: удерживай для заряда, отпусти для выстрела.
+                <br />
+                Импульс сбивает пули рядом. Зелёная энергия восполняет заряд.
+              </p>
+              <p className="mobile-start-hint">
+                Слева — движение, справа — прицел и огонь. Веди двумя пальцами.
+              </p>
               <div className="start-controls">
                 <span>
-                  <MoveUpRight size={16} /> Двигайся
+                  <MoveUpRight size={16} /> Q — оружие
                 </span>
                 <span>
-                  <Crosshair size={16} /> Огонь автоматически
+                  <Crosshair size={16} /> ЛКМ — огонь
                 </span>
                 <span>
-                  <Zap size={16} /> Уклоняйся
+                  <Zap size={16} /> E — импульс
                 </span>
               </div>
             </div>
@@ -599,6 +739,53 @@ export default function Home() {
             </div>
           )}
         </div>
+        <div className="combat-bar">
+          <button
+            className="weapon-button"
+            onClick={switchWeapon}
+            disabled={view.phase !== 'play'}
+            title="Сменить оружие (Q)"
+          >
+            <kbd>Q</kbd>
+            <span>
+              <b>{view.weapon === 'plasma' ? 'ПЛАЗМА' : 'РЕЛЬСОТРОН'}</b>
+              <small>
+                {view.weapon === 'rail'
+                  ? `Заряд ${Math.round(view.charge * 100)}% · отпусти огонь`
+                  : 'Очереди · следи за нагревом'}
+              </small>
+            </span>
+            <span>⇄</span>
+          </button>
+          <div className={`heat-meter ${view.overheated ? 'locked' : ''}`}>
+            <div>
+              <span>{view.overheated ? 'ПЕРЕГРЕВ' : 'НАГРЕВ'}</span>
+              <b>{Math.round(view.heat)}%</b>
+            </div>
+            <Progress aria-label="Нагрев оружия" value={view.heat} />
+          </div>
+          <button
+            className="ability-button pulse-button"
+            onClick={triggerPulse}
+            disabled={view.phase !== 'play' || view.energy < 100}
+            title="Импульс: 100 энергии (E или ПКМ)"
+          >
+            <kbd>E</kbd>
+            <span>
+              ◎ ИМПУЛЬС <b>{Math.floor(view.energy)}%</b>
+            </span>
+          </button>
+          <button
+            className="ability-button dash-button"
+            onClick={triggerDash}
+            disabled={view.phase !== 'play' || view.dash > 0}
+            title="Рывок (пробел)"
+          >
+            <kbd>SPACE</kbd>
+            <Zap size={18} />
+            <span>{view.dash > 0 ? `${view.dash.toFixed(1)}с` : 'РЫВОК'}</span>
+          </button>
+        </div>
         <div className="statusbar">
           <div className="dash-status">
             <Zap size={15} />
@@ -624,15 +811,15 @@ export default function Home() {
             <kbd>W A S D</kbd> / <kbd>↑ ← ↓ →</kbd> движение
           </span>
           <span>
-            <kbd>SPACE</kbd> рывок
+            <kbd>ЛКМ</kbd> огонь · <kbd>Q</kbd> оружие
           </span>
           <span>
-            <kbd>P</kbd> пауза
+            <kbd>SPACE</kbd> рывок · <kbd>E</kbd> импульс · <kbd>P</kbd> пауза
           </span>
         </div>
-        <span className="footer-tip">Собирай энергию. Держи комбо.</span>
+        <span className="footer-tip">Энергия заряжает импульс.</span>
         <span className="mobile-tip">
-          Веди пальцем по арене · кнопка ⚡ для рывка
+          Слева — движение · справа — прицел и огонь
         </span>
       </footer>
     </main>
